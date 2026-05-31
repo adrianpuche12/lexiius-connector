@@ -37,8 +37,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: npm install
-      - run: npm run tauri build
+      - name: Install dependencies
+        run: npm install
+      - name: Compile MCP server to standalone exe (no Node.js required)
+        run: |
+          mkdir -p src-tauri/bin
+          npx pkg src-tauri/src/lexiius-mcp.js --target node18-win-x64 --output src-tauri/bin/lexiius-mcp-server-x86_64-pc-windows-msvc.exe
+      - name: Build Tauri app
+        run: npm run tauri build
       - uses: actions/upload-artifact@v4
         with:
           name: lexiius-connector-windows
@@ -72,7 +78,7 @@ jobs:
 
             ### Requisitos
             - Windows 10 / 11 (64 bits)
-            - Node.js 18+ instalado — https://nodejs.org/
+            - ~~Node.js~~ **No requiere Node.js** — incluido en el instalador
 
             ### Instalacion
             1. Descarga el archivo `.exe`

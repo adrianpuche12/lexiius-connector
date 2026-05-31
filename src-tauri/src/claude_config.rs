@@ -62,11 +62,24 @@ pub fn read_config() -> Result<Value, String> {
         .map_err(|e| format!("El archivo de configuración contiene JSON inválido: {}. Revisá manualmente: {}", e, path.display()))
 }
 
-/// Agrega o actualiza una entrada de Lexiius en mcpServers usando stdio (Node.js).
+/// Retorna la ruta al ejecutable MCP bundleado dentro del Connector.
+/// Si existe el .exe standalone → usarlo (no requiere Node.js).
+/// Fallback → usar node + script.
+fn get_mcp_exe_path() -> Option<PathBuf> {
+    // El ejecutable bundleado está junto al binario del Connector
+    if let Ok(exe) = std::env::current_exe() {
+        let bundled = exe.parent()?.join("lexiius-mcp-server.exe");
+        if bundled.exists() {
+            return Some(bundled);
+        }
+    }
+    None
+}
+
+/// Agrega o actualiza una entrada de Lexiius en mcpServers.
+/// Usa el ejecutable standalone (sin Node.js) si está disponible.
 /// No toca otras claves ni otros servidores MCP.
 pub fn write_connection(nombre: &str, _url: &str, token: &str) -> Result<PathBuf, String> {
-    // Primero asegurar que el script MCP está en disco
-    let script_path = ensure_mcp_script()?;
 
     let path = get_config_path();
     let mut config = read_config()?;
@@ -75,19 +88,30 @@ pub fn write_connection(nombre: &str, _url: &str, token: &str) -> Result<PathBuf
         return Err("El archivo de config no es un objeto JSON válido".to_string());
     }
 
-    // Asegurar que existe la clave mcpServers
     if config.get("mcpServers").is_none() {
         config["mcpServers"] = serde_json::json!({});
     }
 
-    // Config stdio — Claude Desktop lanza Node.js con el script MCP
-    config["mcpServers"][nombre] = serde_json::json!({
-        "command": "node",
-        "args": [script_path.to_string_lossy()],
-        "env": {
-            "LEXIIUS_TOKEN": token
-        }
-    });
+    // Usar el .exe standalone si está disponible (sin Node.js)
+    // Fallback: node + script (requiere Node.js instalado)
+    if let Some(exe_path) = get_mcp_exe_path() {
+        config["mcpServers"][nombre] = serde_json::json!({
+            "command": exe_path.to_string_lossy(),
+            "args": [],
+            "env": {
+                "LEXIIUS_TOKEN": token
+            }
+        });
+    } else {
+        let script_path = ensure_mcp_script()?;
+        config["mcpServers"][nombre] = serde_json::json!({
+            "command": "node",
+            "args": [script_path.to_string_lossy()],
+            "env": {
+                "LEXIIUS_TOKEN": token
+            }
+        });
+    }
 
     // Crear directorio si no existe
     if let Some(parent) = path.parent() {

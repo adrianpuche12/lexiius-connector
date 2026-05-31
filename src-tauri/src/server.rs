@@ -100,9 +100,7 @@ async fn connect_handler(Json(body): Json<ConnectBody>) -> impl IntoResponse {
         return error_response(StatusCode::BAD_REQUEST, "url_no_permitida", "La URL debe apuntar a un dominio de Lexiius").into_response();
     }
 
-    // Verificar Node.js ANTES de escribir el config
-    let (node_ok, node_version) = check_nodejs();
-    if !node_ok {
+REPLACED
         return error_response(
             StatusCode::BAD_REQUEST,
             "nodejs_requerido",
