@@ -1,8 +1,7 @@
 use axum::{
     extract::Json,
-    http::{HeaderName, HeaderValue, Method, StatusCode},
-    middleware,
-    response::{IntoResponse, Response},
+    http::{HeaderValue, Method, StatusCode},
+    response::IntoResponse,
     routing::{get, post},
     Router,
 };
@@ -138,7 +137,8 @@ async fn connections_handler() -> impl IntoResponse {
 // ── Inicio del servidor ────────────────────────────────────────────────────
 
 pub async fn start() {
-    // CORS: solo acepta requests de Lexiius web y desarrollo local
+    // CORS con soporte para Private Network Access (requerido por Chrome
+    // cuando una página HTTPS accede a localhost HTTP)
     let cors = CorsLayer::new()
         .allow_origin([
             "https://app.lexiius.com".parse::<HeaderValue>().unwrap(),
@@ -147,23 +147,15 @@ pub async fn start() {
             "http://localhost:3000".parse::<HeaderValue>().unwrap(),
         ])
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
-        .allow_headers(AllowHeaders::any());
+        .allow_headers(AllowHeaders::any())
+        .allow_private_network(true);
 
     let app = Router::new()
         .route("/ping", get(ping_handler))
         .route("/connect", post(connect_handler))
         .route("/disconnect", post(disconnect_handler))
         .route("/connections", get(connections_handler))
-        .layer(middleware::map_response(add_private_network_header))
         .layer(cors);
-
-async fn add_private_network_header(mut response: Response) -> Response {
-    response.headers_mut().insert(
-        HeaderName::from_static("access-control-allow-private-network"),
-        HeaderValue::from_static("true"),
-    );
-    response
-}
 
     let addr = format!("127.0.0.1:{}", PORT);
     let listener = tokio::net::TcpListener::bind(&addr).await
