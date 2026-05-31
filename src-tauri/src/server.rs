@@ -1,7 +1,8 @@
 use axum::{
     extract::Json,
-    http::{HeaderValue, Method, StatusCode},
-    response::IntoResponse,
+    http::{HeaderName, HeaderValue, Method, StatusCode},
+    middleware,
+    response::{IntoResponse, Response},
     routing::{get, post},
     Router,
 };
@@ -153,7 +154,16 @@ pub async fn start() {
         .route("/connect", post(connect_handler))
         .route("/disconnect", post(disconnect_handler))
         .route("/connections", get(connections_handler))
+        .layer(middleware::map_response(add_private_network_header))
         .layer(cors);
+
+async fn add_private_network_header(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        HeaderName::from_static("access-control-allow-private-network"),
+        HeaderValue::from_static("true"),
+    );
+    response
+}
 
     let addr = format!("127.0.0.1:{}", PORT);
     let listener = tokio::net::TcpListener::bind(&addr).await
