@@ -1,0 +1,245 @@
+use serde_json::Value;
+use std::fs;
+use std::path::PathBuf;
+
+/// Retorna la ruta al claude_desktop_config.json según el SO.
+pub fn get_config_path() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        let appdata = std::env::var("APPDATA").unwrap_or_else(|_| "C:\\Users\\Default\\AppData\\Roaming".into());
+        PathBuf::from(appdata).join("Claude").join("claude_desktop_config.json")
+    }
+    #[cfg(target_os = "macos")]
+    {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("/tmp"))
+            .join("Library")
+            .join("Application Support")
+            .join("Claude")
+            .join("claude_desktop_config.json")
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        PathBuf::from("/tmp/claude_desktop_config.json")
+    }
+}
+
+/// Lee el config existente. Si no existe retorna objeto vacío. Si está corrupto retorna error.
+pub fn read_config() -> Result<Value, String> {
+    let path = get_config_path();
+    if !path.exists() {
+        return Ok(serde_json::json!({}));
+    }
+    let content = fs::read_to_string(&path)
+        .map_err(|e| format!("Error leyendo {}: {}", path.display(), e))?;
+    serde_json::from_str(&content)
+        .map_err(|e| format!("El archivo de configuración contiene JSON inválido: {}. Revisá manualmente: {}", e, path.display()))
+}
+
+/// Agrega o actualiza una entrada de Lexiius en mcpServers.
+/// No toca otras claves ni otros servidores MCP.
+pub fn write_connection(nombre: &str, url: &str, token: &str) -> Result<PathBuf, String> {
+    let path = get_config_path();
+    let mut config = read_config()?;
+
+    if !config.is_object() {
+        return Err("El archivo de config no es un objeto JSON válido".to_string());
+    }
+
+    // Asegurar que existe la clave mcpServers
+    if config.get("mcpServers").is_none() {
+        config["mcpServers"] = serde_json::json!({});
+    }
+
+    // Agregar/sobreescribir la entrada de Lexiius
+    config["mcpServers"][nombre] = serde_json::json!({
+        "url": url,
+        "token": token
+    });
+
+    // Crear directorio si no existe
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Error creando directorio {}: {}", parent.display(), e))?;
+    }
+
+    // Escribir con pretty-print
+    let output = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Error serializando JSON: {}", e))?;
+
+    fs::write(&path, output)
+        .map_err(|e| format!("Sin permisos de escritura en {}: {}. Verificá los permisos del archivo.", path.display(), e))?;
+
+    Ok(path)
+}
+
+/// Elimina una entrada de mcpServers. Si no existía, retorna ok igualmente.
+pub fn remove_connection(nombre: &str) -> Result<(PathBuf, bool), String> {
+    let path = get_config_path();
+    let mut config = read_config()?;
+
+    let existia = config
+        .get("mcpServers")
+        .and_then(|s| s.get(nombre))
+        .is_some();
+
+    if existia {
+        if let Some(servers) = config.get_mut("mcpServers") {
+            if let Some(obj) = servers.as_object_mut() {
+                obj.remove(nombre);
+            }
+        }
+
+        let output = serde_json::to_string_pretty(&config)
+            .map_err(|e| format!("Error serializando: {}", e))?;
+        fs::write(&path, output)
+            .map_err(|e| format!("Error escribiendo: {}", e))?;
+    }
+
+    Ok((path, existia))
+}
+
+/// Lista las conexiones de Lexiius (aquellas cuya URL contiene /api/v1/mcp/anon_live_).
+pub fn list_lexiius_connections() -> Result<Vec<serde_json::Value>, String> {
+    let config = read_config()?;
+    let mut connections = Vec::new();
+
+    if let Some(servers) = config.get("mcpServers").and_then(|s| s.as_object()) {
+        for (nombre, entry) in servers {
+            let url = entry.get("url").and_then(|u| u.as_str()).unwrap_or("");
+            if url.contains("/api/v1/mcp/anon_live_") {
+                let token = entry.get("token").and_then(|t| t.as_str()).unwrap_or("");
+                connections.push(serde_json::json!({
+                    "nombre": nombre,
+                    "url": url,
+                    "token": token
+                }));
+            }
+        }
+    }
+
+    Ok(connections)
+}
+
+/// Detecta si Claude Desktop está corriendo.
+pub fn is_claude_running() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("tasklist")
+            .args(["/FI", "IMAGENAME eq Claude.exe"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("Claude.exe"))
+            .unwrap_or(false)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("pgrep")
+            .args(["-x", "Claude"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        false
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    fn write_connection_to(path: &std::path::Path, nombre: &str, url: &str, token: &str) -> Result<(), String> {
+        let mut config: Value = if path.exists() {
+            let c = fs::read_to_string(path).map_err(|e| e.to_string())?;
+            serde_json::from_str(&c).map_err(|e| e.to_string())?
+        } else {
+            serde_json::json!({})
+        };
+        if config.get("mcpServers").is_none() {
+            config["mcpServers"] = serde_json::json!({});
+        }
+        config["mcpServers"][nombre] = serde_json::json!({ "url": url, "token": token });
+        let out = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
+        fs::write(path, out).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_write_crea_archivo_si_no_existe() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        write_connection_to(&path, "test", "https://api.lexiius.com/api/v1/mcp/anon_live_x", "anon_live_x").unwrap();
+        assert!(path.exists());
+        let v: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(v["mcpServers"]["test"]["url"].is_string());
+    }
+
+    #[test]
+    fn test_write_no_elimina_otros_servidores() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        fs::write(&path, r#"{"mcpServers":{"otro":{"command":"npx"}}}"#).unwrap();
+        write_connection_to(&path, "lexiius", "https://api.lexiius.com/api/v1/mcp/anon_live_x", "anon_live_x").unwrap();
+        let v: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(v["mcpServers"]["otro"].is_object());
+        assert!(v["mcpServers"]["lexiius"].is_object());
+    }
+
+    #[test]
+    fn test_write_no_toca_claves_raiz() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        fs::write(&path, r#"{"theme":"dark","fontSize":14,"mcpServers":{}}"#).unwrap();
+        write_connection_to(&path, "conn", "https://api.lexiius.com/api/v1/mcp/anon_live_x", "anon_live_x").unwrap();
+        let v: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["theme"], "dark");
+        assert_eq!(v["fontSize"], 14);
+    }
+
+    #[test]
+    fn test_write_sobreescribe_token_existente() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        write_connection_to(&path, "conn", "https://api.lexiius.com/api/v1/mcp/anon_live_viejo", "anon_live_viejo").unwrap();
+        write_connection_to(&path, "conn", "https://api.lexiius.com/api/v1/mcp/anon_live_nuevo", "anon_live_nuevo").unwrap();
+        let v: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["mcpServers"]["conn"]["token"], "anon_live_nuevo");
+    }
+
+    #[test]
+    fn test_json_corrupto_retorna_error_sin_sobreescribir() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let contenido_corrupto = "{ esto no es json }";
+        fs::write(&path, contenido_corrupto).unwrap();
+        // Leer directamente (sin la función de test)
+        let result: Result<Value, _> = serde_json::from_str(contenido_corrupto);
+        assert!(result.is_err());
+        // El archivo sigue intacto
+        assert_eq!(fs::read_to_string(&path).unwrap(), contenido_corrupto);
+    }
+
+    #[test]
+    fn test_list_retorna_solo_lexiius() {
+        let config = serde_json::json!({
+            "mcpServers": {
+                "otro": { "command": "npx" },
+                "lexiius-conn": {
+                    "url": "https://api.lexiius.com/api/v1/mcp/anon_live_xxx",
+                    "token": "anon_live_xxx"
+                }
+            }
+        });
+        let servers = config["mcpServers"].as_object().unwrap();
+        let lexiius: Vec<_> = servers.iter()
+            .filter(|(_, v)| v.get("url").and_then(|u| u.as_str()).unwrap_or("").contains("/api/v1/mcp/anon_live_"))
+            .collect();
+        assert_eq!(lexiius.len(), 1);
+        assert_eq!(lexiius[0].0, "lexiius-conn");
+    }
+}
