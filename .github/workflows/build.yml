@@ -2,13 +2,26 @@ name: Build Lexiius Connector
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
+    branches: [main, master]
 
 jobs:
+  test-js:
+    name: Tests JavaScript (script MCP)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm install
+      - name: Run Jest tests
+        run: npm test
+
   test-rust:
-    name: Tests Rust
+    name: Tests Rust (claude_config)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,7 +31,7 @@ jobs:
 
   build-windows:
     name: Build Windows
-    needs: test-rust
+    needs: [test-js, test-rust]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -40,7 +53,7 @@ jobs:
 
   build-macos:
     name: Build macOS
-    needs: test-rust
+    needs: [test-js, test-rust]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
