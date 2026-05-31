@@ -14,6 +14,17 @@ use crate::claude_config;
 const PORT: u16 = 47821;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Verifica si Node.js está instalado y retorna su versión.
+fn check_nodejs() -> (bool, String) {
+    match std::process::Command::new("node").arg("--version").output() {
+        Ok(output) if output.status.success() => {
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            (true, version)
+        }
+        _ => (false, String::new()),
+    }
+}
+
 // ── Estructuras de request/response ────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -66,6 +77,17 @@ async fn ping_handler() -> impl IntoResponse {
     Json(json!({ "ok": true, "version": VERSION, "platform": platform }))
 }
 
+async fn node_check_handler() -> impl IntoResponse {
+    let (ok, version) = check_nodejs();
+    Json(json!({
+        "ok": ok,
+        "version": version,
+        "mensaje": if ok { "" } else {
+            "Node.js no está instalado. Descargalo en https://nodejs.org"
+        }
+    }))
+}
+
 async fn connect_handler(Json(body): Json<ConnectBody>) -> impl IntoResponse {
     // Validaciones
     if body.nombre.trim().is_empty() {
@@ -78,6 +100,16 @@ async fn connect_handler(Json(body): Json<ConnectBody>) -> impl IntoResponse {
         return error_response(StatusCode::BAD_REQUEST, "url_no_permitida", "La URL debe apuntar a un dominio de Lexiius").into_response();
     }
 
+    // Verificar Node.js ANTES de escribir el config
+    let (node_ok, node_version) = check_nodejs();
+    if !node_ok {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "nodejs_requerido",
+            "Node.js no está instalado. Descargalo gratis en https://nodejs.org — tarda 2 minutos.",
+        ).into_response();
+    }
+
     let claude_running = claude_config::is_claude_running();
 
     match claude_config::write_connection(&body.nombre, &body.url, &body.token) {
@@ -87,7 +119,8 @@ async fn connect_handler(Json(body): Json<ConnectBody>) -> impl IntoResponse {
                 "ok": true,
                 "claude_running": claude_running,
                 "reiniciar_requerido": claude_running,
-                "config_path": path.to_string_lossy()
+                "config_path": path.to_string_lossy(),
+                "nodejs_version": node_version,
             })),
         ).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "escritura_fallida", &e).into_response(),
@@ -152,6 +185,7 @@ pub async fn start() {
 
     let app = Router::new()
         .route("/ping", get(ping_handler))
+        .route("/node-check", get(node_check_handler))
         .route("/connect", post(connect_handler))
         .route("/disconnect", post(disconnect_handler))
         .route("/connections", get(connections_handler))

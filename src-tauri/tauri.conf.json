@@ -10,7 +10,19 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [],
+    "windows": [
+      {
+        "label": "main",
+        "title": "Lexiius Connector",
+        "width": 380,
+        "height": 480,
+        "resizable": false,
+        "visible": false,
+        "decorations": true,
+        "center": true,
+        "skipTaskbar": false
+      }
+    ],
     "security": {
       "csp": null
     },
