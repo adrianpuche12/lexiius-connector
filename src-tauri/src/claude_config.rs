@@ -2,6 +2,32 @@ use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
 
+/// Script MCP embebido en el binario del Connector
+const MCP_SCRIPT: &str = include_str!("lexiius-mcp.js");
+
+/// Retorna la ruta donde se guarda el script MCP en el sistema del usuario
+pub fn get_mcp_script_path() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        let appdata = std::env::var("APPDATA").unwrap_or_else(|_| "C:\\Users\\Default\\AppData\\Roaming".into());
+        PathBuf::from(appdata).join("lexiius-mcp.js")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("/tmp"))
+            .join(".lexiius-mcp.js")
+    }
+}
+
+/// Escribe el script MCP al disco si no existe o si la versión cambió
+pub fn ensure_mcp_script() -> Result<PathBuf, String> {
+    let script_path = get_mcp_script_path();
+    fs::write(&script_path, MCP_SCRIPT)
+        .map_err(|e| format!("Error escribiendo script MCP en {}: {}", script_path.display(), e))?;
+    Ok(script_path)
+}
+
 /// Retorna la ruta al claude_desktop_config.json según el SO.
 pub fn get_config_path() -> PathBuf {
     #[cfg(target_os = "windows")]
@@ -36,9 +62,12 @@ pub fn read_config() -> Result<Value, String> {
         .map_err(|e| format!("El archivo de configuración contiene JSON inválido: {}. Revisá manualmente: {}", e, path.display()))
 }
 
-/// Agrega o actualiza una entrada de Lexiius en mcpServers.
+/// Agrega o actualiza una entrada de Lexiius en mcpServers usando stdio (Node.js).
 /// No toca otras claves ni otros servidores MCP.
-pub fn write_connection(nombre: &str, url: &str, token: &str) -> Result<PathBuf, String> {
+pub fn write_connection(nombre: &str, _url: &str, token: &str) -> Result<PathBuf, String> {
+    // Primero asegurar que el script MCP está en disco
+    let script_path = ensure_mcp_script()?;
+
     let path = get_config_path();
     let mut config = read_config()?;
 
@@ -51,10 +80,13 @@ pub fn write_connection(nombre: &str, url: &str, token: &str) -> Result<PathBuf,
         config["mcpServers"] = serde_json::json!({});
     }
 
-    // Agregar/sobreescribir la entrada de Lexiius
+    // Config stdio — Claude Desktop lanza Node.js con el script MCP
     config["mcpServers"][nombre] = serde_json::json!({
-        "url": url,
-        "token": token
+        "command": "node",
+        "args": [script_path.to_string_lossy()],
+        "env": {
+            "LEXIIUS_TOKEN": token
+        }
     });
 
     // Crear directorio si no existe
