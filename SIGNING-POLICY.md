@@ -38,4 +38,4 @@ artefactos que no provengan de este repositorio.
 ## Contacto
 
 Para reportar un problema de seguridad relacionado con la firma de este
-proyecto: TODO-completar-email-de-contacto-publico
+proyecto: jorgepuche02@gmail.com
