@@ -35,6 +35,11 @@ jobs:
     name: Build Windows
     needs: [test-js, test-rust]
     runs-on: windows-latest
+    env:
+      # Se activa solo cuando existan los secrets WINDOWS_CERTIFICATE (.pfx en base64)
+      # y WINDOWS_CERTIFICATE_PASSWORD en el repo. Hasta entonces el build sigue
+      # exactamente igual que hoy (sin firmar).
+      HAS_CERT: ${{ secrets.WINDOWS_CERTIFICATE != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -47,8 +52,31 @@ jobs:
         run: |
           mkdir -p src-tauri/bin
           npx pkg src-tauri/src/lexiius-mcp.js --target node18-win-x64 --output src-tauri/bin/lexiius-mcp-server-x86_64-pc-windows-msvc.exe
+      - name: Import code-signing certificate
+        if: env.HAS_CERT == 'true'
+        id: import_cert
+        shell: pwsh
+        run: |
+          $certBytes = [Convert]::FromBase64String("${{ secrets.WINDOWS_CERTIFICATE }}")
+          $certPath = Join-Path $env:RUNNER_TEMP "lexiius-signing.pfx"
+          [IO.File]::WriteAllBytes($certPath, $certBytes)
+          $securePassword = ConvertTo-SecureString -String "${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}" -Force -AsPlainText
+          $cert = Import-PfxCertificate -FilePath $certPath -CertStoreLocation Cert:\CurrentUser\My -Password $securePassword
+          Remove-Item $certPath
+          echo "THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_OUTPUT
       - name: Build Tauri app
-        run: npm run tauri build
+        shell: pwsh
+        run: |
+          if ($env:HAS_CERT -eq "true") {
+            $cfg = @{ bundle = @{ windows = @{
+              certificateThumbprint = "${{ steps.import_cert.outputs.THUMBPRINT }}"
+              timestampUrl = "http://timestamp.digicert.com"
+            } } } | ConvertTo-Json -Depth 5
+            Set-Content -Path sign-config.json -Value $cfg -Encoding utf8
+            npm run tauri build -- --config sign-config.json
+          } else {
+            npm run tauri build
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: lexiius-connector-windows
