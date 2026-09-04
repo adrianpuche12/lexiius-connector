@@ -2,7 +2,7 @@
 name = "lexiius-connector"
 version = "1.0.0"
 description = "Lexiius Connector — conecta Lexiius con Claude Desktop en 1 click"
-authors = ["Nilo Solutions"]
+authors = ["Adrian Pucheta"]
 edition = "2021"
 
 [lib]
